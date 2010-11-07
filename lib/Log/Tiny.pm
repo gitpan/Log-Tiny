@@ -9,11 +9,11 @@ Log::Tiny - Log data with as little code as possible
 
 =head1 VERSION
 
-Version 0.01
+Version 0.9
 
 =cut
 
-$VERSION = '0.01';
+$VERSION = '0.9';
 $errstr = '';
 
 %formats = (
@@ -29,7 +29,7 @@ $errstr = '';
     p => [ 'd', sub { $$ }, ],              # pid: $$
     P => [ 's', sub { (caller(2))[0] }, ],  # caller_pkg: caller
     r => [ 'd', sub { time - $^T }, ],      # runtime: $^T
-    S => [ 's', sub { (caller(2))[3] }, ],  # caller_sub: caller
+    S => [ 's', \&__format_S, sub { my $t = (caller(2))[3];  }, ],  # caller_sub: caller
     t => [ 's', sub { scalar localtime }, ],# localtime: scalar localtime
     T => [ 'd', sub { time }, ],            # unix_time: time
     u => [ 'd', sub { $> }, ],              # effective_uid: $>
@@ -37,6 +37,8 @@ $errstr = '';
     v => [ 'd', sub { $] }, ],              # long_perl_ver: $]
     V => [ 's', sub { sprintf("%vd", $^V) }, ], # short_perl_ver
 );
+
+sub __format_S { my $t = (caller(2))[3];  if ( $t eq 'Log::Tiny::AUTOLOAD' ) { $t = 'main'; }; $t;  }
 
 =head1 SYNOPSIS
 
@@ -81,6 +83,7 @@ sub new {
         return _error( "Could not open $logfile: $!" );
     my $self = bless { 
         format => $format,
+        methods_only => [],
     }, $pkg;
     $self->format();
     return $self;
@@ -94,9 +97,9 @@ a peek inside the source of this module will tell you, sprintf
 is used internally.  However, be advised that these log formats 
 B<are not sprintf>.
 
-Interpolated data are specified by an octothorpe (hash, "pound sign",
-etc.), followed by a character.  A literal octothorpe can be 
-specified via two octothorpes in succession.  You may use any
+Interpolated data are specified by an percent sign (C< % >), 
+followed by a character.  A literal percent sign can be 
+specified via two in succession ( C< %% > ).  You may use any
 of the formatting attributes as noted in L<perlfunc>, under 
 "sprintf" (C<perldoc -f sprintf>).
 
@@ -148,12 +151,12 @@ sub format {
     # make real format
     my $format = join '', keys %formats;
     $self->{format} =~ 
-      s/%(-?\d*(?:\.\d+)?)([$format])/replace($self, $1, $2);/gex;
+      s/%(-?\d*(?:\.\d+)?)([$format])/_replace($self, $1, $2);/gex;
       # thanks, mschilli
     return $self->{format};
 }
 
-sub replace {
+sub _replace {
     my ( $self, $num, $op ) = @_;
     return '%%' if $op eq '%';
     return "%%$op" unless defined $formats{$op};
@@ -179,10 +182,18 @@ sub AUTOLOAD {
     $method =~ s/.*:://;
     return _error( "Log routine ($method) is not a class method" ) 
         unless defined ref $self;
+    if (@{ $self->{methods_only} }) { 
+        my $in = 0;
+        foreach (@{ $self->{methods_only} }) {
+            $in++ if uc $method eq uc $_;
+        }
+        return _error( "Log category '$method' not in whitelist" ) 
+          unless $in;
+    }
     my $tmp = '';
     $tmp .= sprintf ( 
         $self->{format}, 
-        $self->mk_args( $method, $_ ),
+        $self->_mk_args( $method, $_ ),
     ) foreach @_;
     my $ret;
     {
@@ -193,7 +204,7 @@ sub AUTOLOAD {
     return $ret;
 }
 
-sub mk_args {
+sub _mk_args {
     my $self = shift;
     my ( $method, $msg ) = @_;
     $msg = '' unless defined $msg;
@@ -208,8 +219,26 @@ sub mk_args {
 
 sub DESTROY { close LOG or warn "Couldn't close log file: $!"; }
 
+=head2 errstr
+
+Called as a class method, C< Log::Tiny->errstr > reveals the 
+error that Log::Tiny encountered in creation or invocation.
+
+=cut
+
 sub errstr { $errstr; }
 sub _error { $errstr = shift; undef; }
+
+=head2 log_only
+
+Log only the given categories
+
+=cut
+
+sub log_only {
+    my $self = shift;
+    $self->{methods_only} = \@_;
+}
 
 =head1 AUTHOR
 
@@ -258,7 +287,7 @@ Log::Log4perl.
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2007 Jordan M. Adler, all rights reserved.
+Copyright 2007-2010 Jordan M. Adler, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
